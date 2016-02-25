@@ -16,7 +16,7 @@
   <property name="bin.dir" value="../bin/"/>
   <property name="lib.dir" value="../lib/"/>
   <!-- Name of the jar file (created in the 'jar' target) -->
-  <property name="jar.name" value="aspen-trend-reversal-0.2"/>
+  <property name="jar.name" value="aspen-trend-reversal-0.4"/>
 
   
 	<path id="build.classpath">
@@ -99,7 +99,7 @@
     
   	<jar destfile="jar/${jar.name}.jar" filesetmanifest="skip">
     	<fileset dir="classes" includes="**/*.class"/>
-  		
+  		<!-- <fileset dir="classes" includes="**/*"/> -->
     <!--
     	<fileset dir="classes" includes="**/*.class"/>
       <fileset dir="${src.dir}" includes="**/*.properties"/>
