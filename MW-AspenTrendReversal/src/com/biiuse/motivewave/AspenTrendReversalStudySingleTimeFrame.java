@@ -40,8 +40,8 @@ import com.motivewave.platform.sdk.study.StudyHeader;
 
 @StudyHeader(
 		namespace = "com.biiuse", 
-		id = "Aspen_Session_Close_High-Low_Study_1.2", 
-		name = "Aspen Session Close High-Low Study v1.2", 
+		id = "Aspen_Session_Close_High-Low_Study_1.5", 
+		name = "Aspen Session Close High-Low Study v1.5", 
 		desc = "Plots out new sesion close highs and lows", 
 		menu = "Aspen", 
 		overlay = true, 
@@ -57,6 +57,15 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 	
 	enum Signals { NONE, LOW, HIGH };
 	
+	//input identifiers
+	final static String LOOKBACK_DAYS = "lookBackDays";
+	final static String SESSION_CLOSE_HOURS = "sessionCloseHours";
+	final static String SESSION_CLOSE_MINUTES = "sessionCloseMinutes";
+	final static String LOOKAHEAD_SESSION_CLOSE = "lookAheadSessionClose";
+	final static String HH_LL_MARKER = "HHLLMarker";
+	final static String SHOW_END_OF_SESSION = "showEndOfSession";
+	final static String OMIT_CONSECUTIVE_LL_HH = "omitConsecutiveLLHH";
+	
 	@Override
 	public void initialize(Defaults defaults) {
 		// User Settings
@@ -67,20 +76,19 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 
 		SettingGroup ma1 = new SettingGroup("Look Back and Session Information");
 		tab.addGroup(ma1);
-		ma1.addRow(new IntegerDescriptor(Inputs.PERIOD, "LookBackDays", 10, 1,
-				9999, 1));
-		ma1.addRow(new IntegerDescriptor(Inputs.INPUT, "Session Close Hours (EST)",
+		ma1.addRow(new IntegerDescriptor(LOOKBACK_DAYS, "LookBackDays", 10, 1, 9999, 1));
+		ma1.addRow(new IntegerDescriptor(SESSION_CLOSE_HOURS, "Session Close Hours (EST)",
 				17, 0, 23, 1));
-		ma1.addRow(new IntegerDescriptor(Inputs.INPUT2, "Session Close Minutes (EST)",
+		ma1.addRow(new IntegerDescriptor(SESSION_CLOSE_MINUTES, "Session Close Minutes (EST)",
 				0, 0, 59, 1));
-		ma1.addRow(new IntegerDescriptor(Inputs.SHIFT, "Session Close Look AHead In Minutes", 60, 0, 120, 1));
+		ma1.addRow(new IntegerDescriptor(LOOKAHEAD_SESSION_CLOSE, "Session Close Look AHead In Minutes", 60, 0, 120, 1));
 		
-		ma1.addRow(new MarkerDescriptor(Inputs.UP_MARKER, "New HH/LL Marker", Enums.MarkerType.ARROW, Enums.Size.MEDIUM, defaults.getRed(), defaults.getLineColor(), true, true));
+		ma1.addRow(new MarkerDescriptor(HH_LL_MARKER, "New HH/LL Marker", Enums.MarkerType.ARROW, Enums.Size.MEDIUM, defaults.getRed(), defaults.getLineColor(), true, true));
 		
 		
-		ma1.addRow(new BooleanDescriptor(Inputs.IND, "Show end of session?", true));
+		ma1.addRow(new BooleanDescriptor(SHOW_END_OF_SESSION, "Show end of session?", true));
 
-		ma1.addRow(new BooleanDescriptor(Inputs.IND2, "Omit consecutive LL or HHs", true));
+		ma1.addRow(new BooleanDescriptor(OMIT_CONSECUTIVE_LL_HH, "Omit consecutive LL or HHs", true));
 
 		
 		// Runtime Settings
@@ -89,118 +97,147 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 		// Signals
 	    desc.declareSignal(Signals.HIGH, "Session close high");
 	    desc.declareSignal(Signals.LOW, "Session close low");
-		desc.setLabelSettings(Inputs.PERIOD, Inputs.INPUT, Inputs.INPUT2, Inputs.SHIFT);
+		desc.setLabelSettings(LOOKBACK_DAYS, SESSION_CLOSE_HOURS, SESSION_CLOSE_MINUTES, LOOKAHEAD_SESSION_CLOSE);
 	    desc.setLabelPrefix("Session Close HH/LL Study - rev");
 	}
 	
 	private double getSessionCloseLow(DataContext ctx, int lookBackSessions, int barIndex) throws DataException {
-		double low = 999999;
-		int sessionCloseHours = getSettings().getInteger(Inputs.INPUT);
-		int sessionCloseMinutes = getSettings().getInteger(Inputs.INPUT2);
 		
-		DateTime dateTimeOfCurrentBar = new DateTime(ctx.getDataSeries().getStartTime(barIndex)); 
+		info ("LookBackSessions: " + lookBackSessions);
 		
-		ZonedDateTime sessionCloseDateTimeInEST = ZonedDateTime.of(dateTimeOfCurrentBar.getYear(), 
-															   dateTimeOfCurrentBar.getMonthOfYear(),
-															   dateTimeOfCurrentBar.getDayOfMonth(), 
-															   sessionCloseHours,
-															   sessionCloseMinutes,
-															   0,0,
-															   ZoneId.of("America/New_York"));
-		int numberOfSessionsAnalyzed = 0;
-		while (numberOfSessionsAnalyzed < lookBackSessions) {
-			//calculate the close date and time of the previous session in EST, ensure to skip weekends
-			do {
-				sessionCloseDateTimeInEST = sessionCloseDateTimeInEST.minusDays(1);
-				sessionCloseDateTimeInEST = ZonedDateTime.of(sessionCloseDateTimeInEST.getYear(), 
-															 sessionCloseDateTimeInEST.getMonthValue(),
-															 sessionCloseDateTimeInEST.getDayOfMonth(),
-															 sessionCloseHours,
-															 sessionCloseMinutes,
-															 0,0,
-															 ZoneId.of("America/New_York"));
+		//if daily charts simply check the previous bars
+		if (ctx.getChartBarSize().getIntervalMinutes() == 1440) {
+			info ("Bar: " + new DateTime(ctx.getDataSeries().getStartTime(barIndex)).toString());
+			double low = 999999;
+			for (int i = 1; i <= lookBackSessions; ++i) {
+				if (ctx.getDataSeries().getClose(barIndex-i) < low) low = ctx.getDataSeries().getClose(barIndex-i);
+				info (new DateTime(ctx.getDataSeries().getStartTime(barIndex-i)).toString() + " " + ctx.getDataSeries().getClose(barIndex-i));
+			}
+			return low;
+		//otherwise it's a bit more complicated
+		} else {
+			double low = 999999;
+		
+			int sessionCloseHours = getSettings().getInteger(SESSION_CLOSE_HOURS);
+			int sessionCloseMinutes = getSettings().getInteger(SESSION_CLOSE_MINUTES);
+			
+			DateTime dateTimeOfCurrentBar = new DateTime(ctx.getDataSeries().getStartTime(barIndex)); 
+			
+			ZonedDateTime sessionCloseDateTimeInEST = ZonedDateTime.of(dateTimeOfCurrentBar.getYear(), 
+																   dateTimeOfCurrentBar.getMonthOfYear(),
+																   dateTimeOfCurrentBar.getDayOfMonth(), 
+																   sessionCloseHours,
+																   sessionCloseMinutes,
+																   0,0,
+																   ZoneId.of("America/New_York"));
+			int numberOfSessionsAnalyzed = 0;
+			while (numberOfSessionsAnalyzed < lookBackSessions) {
+				//calculate the close date and time of the previous session in EST, ensure to skip weekends
+				do {
+					sessionCloseDateTimeInEST = sessionCloseDateTimeInEST.minusDays(1);
+					sessionCloseDateTimeInEST = ZonedDateTime.of(sessionCloseDateTimeInEST.getYear(), 
+																 sessionCloseDateTimeInEST.getMonthValue(),
+																 sessionCloseDateTimeInEST.getDayOfMonth(),
+																 sessionCloseHours,
+																 sessionCloseMinutes,
+																 0,0,
+																 ZoneId.of("America/New_York"));
+					
+					
+				} while ((sessionCloseDateTimeInEST.getDayOfWeek() == DayOfWeek.SUNDAY) ||
+						 (sessionCloseDateTimeInEST.getDayOfWeek() == DayOfWeek.SATURDAY));
 				
 				
-			} while ((sessionCloseDateTimeInEST.getDayOfWeek() == DayOfWeek.SUNDAY) ||
-					 (sessionCloseDateTimeInEST.getDayOfWeek() == DayOfWeek.SATURDAY));
+				//find corresponding time in EST
+				DateTime sessionCloseDateTimeinUTC = new DateTime(sessionCloseDateTimeInEST.getYear(),
+																  sessionCloseDateTimeInEST.getMonthValue(),
+																  sessionCloseDateTimeInEST.getDayOfMonth(),
+																  sessionCloseDateTimeInEST.getHour(),
+																  sessionCloseDateTimeInEST.getMinute(),
+																  sessionCloseDateTimeInEST.getSecond()).
+																  minusHours(sessionCloseDateTimeInEST.getOffset().getTotalSeconds()/3600).
+																  minusMinutes(ctx.getChartBarSize().getIntervalMinutes());
+				
+				//info ("Predicted session start bar in UTC: " + sessionCloseDateTimeinUTC);
+				
+				
+				int indexOfSessionCloseBar = ctx.getDataSeries().findIndex(sessionCloseDateTimeinUTC.getMillis());
+				if (indexOfSessionCloseBar == -1) throw new InsufficientDataException();
+				double closeOfSession = ctx.getDataSeries().getClose(indexOfSessionCloseBar);
+				
+				if (closeOfSession < low) low = closeOfSession;
+				numberOfSessionsAnalyzed++;
+
+			}
 			
-			//find corresponding time in EST
-			DateTime sessionCloseDateTimeinUTC = new DateTime(sessionCloseDateTimeInEST.getYear(),
-															  sessionCloseDateTimeInEST.getMonthValue(),
-															  sessionCloseDateTimeInEST.getDayOfMonth(),
-															  sessionCloseDateTimeInEST.getHour(),
-															  sessionCloseDateTimeInEST.getMinute(),
-															  sessionCloseDateTimeInEST.getSecond()).
-															  minusHours(sessionCloseDateTimeInEST.getOffset().getTotalSeconds()/3600).
-															  minusMinutes(ctx.getChartBarSize().getIntervalMinutes());
-			
-			//info ("Predicted session start bar in UTC: " + sessionCloseDateTimeinUTC);
-			
-			int indexOfSessionCloseBar = ctx.getDataSeries().findIndex(sessionCloseDateTimeinUTC.getMillis());
-			if (indexOfSessionCloseBar == -1) throw new InsufficientDataException();
-			double closeOfSession = ctx.getDataSeries().getClose(indexOfSessionCloseBar);
-			if (closeOfSession < low) low = closeOfSession;
-			numberOfSessionsAnalyzed++;
-			//info ("Time of session start bar in UTC: " + new DateTime(ctx.getDataSeries().getStartTime(indexOfSessionCloseBar)));
+			if (low == 999999) throw new DataException("Lowest low could not be estblished");
+			return low;
 		}
-		
-		if (low == 999999) throw new DataException("Lowest low could not be estblished");
-		return low;
 	}
 	
 	private double getSessionCloseHigh(DataContext ctx, int lookBackSessions, int barIndex) throws DataException {
-		double high = -1;
-		int sessionCloseHours = getSettings().getInteger(Inputs.INPUT);
-		int sessionCloseMinutes = getSettings().getInteger(Inputs.INPUT2);
-		
-		DateTime dateTimeOfCurrentBar = new DateTime(ctx.getDataSeries().getStartTime(barIndex)); 
-		
-		ZonedDateTime sessionCloseDateTimeInEST = ZonedDateTime.of(dateTimeOfCurrentBar.getYear(), 
-															   dateTimeOfCurrentBar.getMonthOfYear(),
-															   dateTimeOfCurrentBar.getDayOfMonth(), 
-															   sessionCloseHours,
-															   sessionCloseMinutes,
-															   0,0,
-															   ZoneId.of("America/New_York"));
-		int numberOfSessionsAnalyzed = 0;
-		while (numberOfSessionsAnalyzed < lookBackSessions) {
-			//calculate the close date and time of the previous session in EST, ensure to skip weekends
-			do {
-				sessionCloseDateTimeInEST = sessionCloseDateTimeInEST.minusDays(1);
-				sessionCloseDateTimeInEST = ZonedDateTime.of(sessionCloseDateTimeInEST.getYear(), 
-															 sessionCloseDateTimeInEST.getMonthValue(),
-															 sessionCloseDateTimeInEST.getDayOfMonth(),
-															 sessionCloseHours,
-															 sessionCloseMinutes,
-															 0,0,
-															 ZoneId.of("America/New_York"));
-				
-				
-			} while ((sessionCloseDateTimeInEST.getDayOfWeek() == DayOfWeek.SUNDAY) ||
-					 (sessionCloseDateTimeInEST.getDayOfWeek() == DayOfWeek.SATURDAY));
-			
-			//find corresponding time in EST
-			DateTime sessionCloseDateTimeinUTC = new DateTime(sessionCloseDateTimeInEST.getYear(),
-															  sessionCloseDateTimeInEST.getMonthValue(),
-															  sessionCloseDateTimeInEST.getDayOfMonth(),
-															  sessionCloseDateTimeInEST.getHour(),
-															  sessionCloseDateTimeInEST.getMinute(),
-															  sessionCloseDateTimeInEST.getSecond()).
-															  minusHours(sessionCloseDateTimeInEST.getOffset().getTotalSeconds()/3600).
-															  minusMinutes(ctx.getChartBarSize().getIntervalMinutes());
-			
-			//info ("Predicted session start bar in UTC: " + sessionCloseDateTimeinUTC);
-			
-			int indexOfSessionCloseBar = ctx.getDataSeries().findIndex(sessionCloseDateTimeinUTC.getMillis());
-			if (indexOfSessionCloseBar == -1) throw new InsufficientDataException();
-			double closeOfSession = ctx.getDataSeries().getClose(indexOfSessionCloseBar);
-			if (closeOfSession > high) high = closeOfSession;
-			numberOfSessionsAnalyzed++;
-			//info ("Time of session start bar in UTC: " + new DateTime(ctx.getDataSeries().getStartTime(indexOfSessionCloseBar)));
+		//for daily charts simply count back the lookback bars
+		if (ctx.getChartBarSize().getIntervalMinutes() == 1440) {
+			double high = -1;
+			for (int i = 1; i <= lookBackSessions; ++i) {
+				if (ctx.getDataSeries().getClose(barIndex-i) > high) high = ctx.getDataSeries().getClose(barIndex-i);
+			}
+			return high;
 		}
-		
-		if (high == -1) throw new DataException("Lowest low could not be estblished");
-		return high;
+		else {
+			double high = -1;
+			int sessionCloseHours = getSettings().getInteger(SESSION_CLOSE_HOURS);
+			int sessionCloseMinutes = getSettings().getInteger(SESSION_CLOSE_MINUTES);
+			
+			DateTime dateTimeOfCurrentBar = new DateTime(ctx.getDataSeries().getStartTime(barIndex)); 
+			
+			ZonedDateTime sessionCloseDateTimeInEST = ZonedDateTime.of(dateTimeOfCurrentBar.getYear(), 
+																   dateTimeOfCurrentBar.getMonthOfYear(),
+																   dateTimeOfCurrentBar.getDayOfMonth(), 
+																   sessionCloseHours,
+																   sessionCloseMinutes,
+																   0,0,
+																   ZoneId.of("America/New_York"));
+			int numberOfSessionsAnalyzed = 0;
+			while (numberOfSessionsAnalyzed < lookBackSessions) {
+				//calculate the close date and time of the previous session in EST, ensure to skip weekends
+				do {
+					sessionCloseDateTimeInEST = sessionCloseDateTimeInEST.minusDays(1);
+					sessionCloseDateTimeInEST = ZonedDateTime.of(sessionCloseDateTimeInEST.getYear(), 
+																 sessionCloseDateTimeInEST.getMonthValue(),
+																 sessionCloseDateTimeInEST.getDayOfMonth(),
+																 sessionCloseHours,
+																 sessionCloseMinutes,
+																 0,0,
+																 ZoneId.of("America/New_York"));
+					
+					
+				} while ((sessionCloseDateTimeInEST.getDayOfWeek() == DayOfWeek.SUNDAY) ||
+						 (sessionCloseDateTimeInEST.getDayOfWeek() == DayOfWeek.SATURDAY));
+				
+				//find corresponding time in EST
+				DateTime sessionCloseDateTimeinUTC = new DateTime(sessionCloseDateTimeInEST.getYear(),
+																  sessionCloseDateTimeInEST.getMonthValue(),
+																  sessionCloseDateTimeInEST.getDayOfMonth(),
+																  sessionCloseDateTimeInEST.getHour(),
+																  sessionCloseDateTimeInEST.getMinute(),
+																  sessionCloseDateTimeInEST.getSecond()).
+																  minusHours(sessionCloseDateTimeInEST.getOffset().getTotalSeconds()/3600).
+																  minusMinutes(ctx.getChartBarSize().getIntervalMinutes());
+				
+				//info ("Predicted session start bar in UTC: " + sessionCloseDateTimeinUTC);
+				
+				int indexOfSessionCloseBar = ctx.getDataSeries().findIndex(sessionCloseDateTimeinUTC.getMillis());
+				if (indexOfSessionCloseBar == -1) throw new InsufficientDataException();
+				double closeOfSession = ctx.getDataSeries().getClose(indexOfSessionCloseBar);
+				if (closeOfSession > high) high = closeOfSession;
+				numberOfSessionsAnalyzed++;
+				//info ("Time of session start bar in UTC: " + new DateTime(ctx.getDataSeries().getStartTime(indexOfSessionCloseBar)));
+			}
+			
+			if (high == -1) throw new DataException("Lowest low could not be estblished");
+			return high;
+		}
 	}
 	
 	
@@ -265,9 +302,10 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 		case 15:
 		case 20: 
 		case 30:
-		case 60: return true;
+		case 60: 
+		case 1440: return true;
 		default: {
-			error ("Study only works for: 1, 2, 5, 10, 20, 30, 60mins charts");
+			error ("Study only works for: 1, 2, 5, 10, 20, 30, 60mins and daily charts");
 			return false;
 			}
 		}
@@ -307,7 +345,7 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 	@Override
 	protected void calculate(int index, DataContext ctx) {
 		
-		//if(!this.isOnValidChart) return;
+		if(!this.isValidChartType(ctx)) return;
 		DateTimeFormatter dtfwithHours = DateTimeFormat.forPattern("MM/dd/yyyy HH:mm:ss");
 		
 		DataSeries series = ctx.getDataSeries();
@@ -318,19 +356,19 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 		LocalDateTime javaTimeBarEndTime = LocalDateTime.of(barEndTime.getYear(), barEndTime.getMonthOfYear(), barEndTime.getDayOfMonth(), barEndTime.getHourOfDay(), barEndTime.getMinuteOfHour());
 		ZonedDateTime barEndTimeInEST = ZonedDateTime.of(javaTimeBarEndTime, ZoneId.of("America/New_York"));
 		
-		int sessionCloseHours = getSettings().getInteger(Inputs.INPUT);
-		int sessionCloseMinutes = getSettings().getInteger(Inputs.INPUT2);
-		int lookBackPeriod = getSettings().getInteger(Inputs.PERIOD);
+		int sessionCloseHours = getSettings().getInteger(SESSION_CLOSE_HOURS);
+		int sessionCloseMinutes = getSettings().getInteger(SESSION_CLOSE_MINUTES);
+		int lookBackPeriod = getSettings().getInteger(LOOKBACK_DAYS)-1; //
 		
 		int sessionCloseTotalMinutes = sessionCloseHours * 60 + sessionCloseMinutes;
+		
 		int barEndTotalMinutesinEST = barEndTimeInEST.plusSeconds(barEndTimeInEST.getOffset().getTotalSeconds()).getHour() * 60	+ barEndTimeInEST.plusSeconds(barEndTimeInEST.getOffset().getTotalSeconds()).getMinute();
 		
 		//check if we are at the end of the session
 		if ((barEndTotalMinutesinEST == sessionCloseTotalMinutes) && (barEndTime.getDayOfWeek() != DateTimeConstants.SUNDAY)){
-			if((getSettings().getBoolean(Inputs.IND)) && (!(ctx.getChartBarSize().getIntervalMinutes()>=1440))){
-			
-				Coordinate lineStart = new Coordinate(series.getStartTime(index), 0);
-				Coordinate lineEnd = new Coordinate(series.getStartTime(index), 1000);
+			if((getSettings().getBoolean(SHOW_END_OF_SESSION)) && (!(ctx.getChartBarSize().getIntervalMinutes()>=1440))){
+			    Coordinate lineStart = new Coordinate(series.getEndTime(index), 0);
+				Coordinate lineEnd = new Coordinate(series.getEndTime(index), 100000);
 				Line sessionEndMarker = new Line(lineStart, lineEnd);
 				sessionEndMarker.setStroke(new BasicStroke(1, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0, new float[]{5}, 0));
 				sessionEndMarker.setColor(Color.GRAY);
@@ -338,7 +376,7 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 			}
 		}
 			
-		int lookAHead = getSettings().getInteger(Inputs.SHIFT);
+		int lookAHead = getSettings().getInteger(LOOKAHEAD_SESSION_CLOSE);
 		
 		//info ("barEndTotalMinutesInEST: " + barEndTotalMinutesinEST + " sessioncloseTotalMinutes: " + sessionCloseTotalMinutes + " lookAhead: " + lookAHead);
 		
@@ -347,6 +385,7 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 			double previousLowestLow = -1;
 			double previousHighestHigh = 9999;
 			try {
+				info ("Getting session low / high");
 				previousLowestLow = getSessionCloseLow(ctx, lookBackPeriod, index);
 				previousHighestHigh = getSessionCloseHigh(ctx, lookBackPeriod, index);
 				/*
@@ -360,21 +399,21 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 				
 				} */
 			} catch (DataException e) {
-				 info (e.toString());
+				 //info (e.toString());
 				return;
 			}
 			
 			
 			if (series.getClose(index) < previousLowestLow) {
-				if ((getSettings().getBoolean(Inputs.IND2)) && (this.lastSignal != Signals.LOW)) {
-					info(new DateTime(series.getEndTime(index)).toString() + " prevLL is: " + previousLowestLow + " close is" + series.getClose(index));
+				if ((!getSettings().getBoolean(OMIT_CONSECUTIVE_LL_HH)) || (this.lastSignal != Signals.LOW)) {
+					//info(new DateTime(series.getEndTime(index)).toString() + " prevLL is: " + previousLowestLow + " close is" + series.getClose(index));
 					this.lastSignal = Signals.LOW;
-					deleteLastFigures(barEndTime, lookAHead);
+					//deleteLastFigures(barEndTime, lookAHead);
 					
-					info(dtfwithHours.print(barEndTime) + ": New lowest low found");
+					//info(dtfwithHours.print(barEndTime) + ": New lowest low found");
 					Coordinate c = new Coordinate(series.getStartTime(index), series.getLow(index));
 					
-					MarkerInfo marker = getSettings().getMarker(Inputs.UP_MARKER);
+					MarkerInfo marker = getSettings().getMarker(HH_LL_MARKER);
 					Marker arrow = new Marker(c, Enums.Position.BOTTOM, marker);
 					addFigure(arrow);
 					
@@ -384,22 +423,19 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 					dateOfLastFigure = barEndTime;
 					lastFigureMarker = arrow;
 					lastFigureLabel = priceLabel;
-					
+					ctx.signal(index, Signals.LOW, "New low on session close", series.getClose(index));
 				}
-				
-				ctx.signal(index, Signals.LOW, "New low on session close", series.getClose(index));
-				
 			}
 				
 			if (series.getClose(index) > previousHighestHigh) {
-				if ((getSettings().getBoolean(Inputs.IND2)) && (this.lastSignal != Signals.HIGH)) {
+				if ((!getSettings().getBoolean(OMIT_CONSECUTIVE_LL_HH)) || (this.lastSignal != Signals.HIGH)) {
 					this.lastSignal = Signals.HIGH;
 					
-					deleteLastFigures(barEndTime, lookAHead);
-					info(dtfwithHours.print(barEndTime) + ": New highest high found");
+					//deleteLastFigures(barEndTime, lookAHead);
+					//info(dtfwithHours.print(barEndTime) + ": New highest high found");
 					Coordinate c = new Coordinate(series.getStartTime(index), series.getHigh(index));
 					
-					MarkerInfo marker = getSettings().getMarker(Inputs.UP_MARKER);
+					MarkerInfo marker = getSettings().getMarker(HH_LL_MARKER);
 					Marker arrow = new Marker(c, Enums.Position.TOP, marker);
 					addFigure(arrow);
 					
@@ -409,8 +445,9 @@ public class AspenTrendReversalStudySingleTimeFrame extends Study {
 					dateOfLastFigure = barEndTime;
 					lastFigureMarker = arrow;
 					lastFigureLabel = priceLabel;
+					ctx.signal(index, Signals.HIGH, "New high on session close", series.getClose(index));
 				}
-				ctx.signal(index, Signals.HIGH, "New high on session close", series.getClose(index));
+				
 			}
 		}
 	}

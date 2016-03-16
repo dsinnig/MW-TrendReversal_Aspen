@@ -16,7 +16,7 @@
   <property name="bin.dir" value="../bin/"/>
   <property name="lib.dir" value="../lib/"/>
   <!-- Name of the jar file (created in the 'jar' target) -->
-  <property name="jar.name" value="aspen-trend-reversal-0.4"/>
+  <property name="jar.name" value="aspen-trend-reversal-1.5"/>
 
   
 	<path id="build.classpath">

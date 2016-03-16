@@ -19,6 +19,7 @@ import com.motivewave.platform.sdk.common.Instrument;
 import com.motivewave.platform.sdk.common.Enums.BarSizeType;
 import com.motivewave.platform.sdk.common.desc.BarSizeDescriptor;
 import com.motivewave.platform.sdk.common.desc.BooleanDescriptor;
+import com.motivewave.platform.sdk.common.desc.DoubleDescriptor;
 import com.motivewave.platform.sdk.common.desc.IntegerDescriptor;
 import com.motivewave.platform.sdk.common.desc.MarkerDescriptor;
 import com.motivewave.platform.sdk.common.desc.SettingGroup;
@@ -33,7 +34,7 @@ import com.motivewave.platform.sdk.study.StudyHeader;
  */
 @StudyHeader(
 		namespace = "com.biiuse", 
-		id = "Aspen_Session_Close_High-Low_Strategy_v1.2", 
+		id = "Aspen_Session_Close_High-Low_Strategy_v1.5", 
 		name = "Aspen Trend Reversal Strategy v1.2", 
 		desc = "Places and reversal positions on trend reversal indication", 
 		menu = "Aspen", 
@@ -52,39 +53,30 @@ import com.motivewave.platform.sdk.study.StudyHeader;
 public class AspenTrendReversalStrategy extends AspenTrendReversalStudySingleTimeFrame {
 	
 	
+	final static String POSITION_SIZE = "positionSize";
+	final static String STOP_LOSS_POINTS = "stopLossPoints";
+	
+	
 	@Override
 	public void initialize(Defaults defaults) {
-		SettingsDescriptor sd = new SettingsDescriptor();
-		setSettingsDescriptor(sd);
-		SettingTab tab = new SettingTab("General");
-		sd.addTab(tab);
+		super.initialize(defaults);
+		SettingsDescriptor sd = getSettingsDescriptor();
+		SettingTab tab = (SettingTab) sd.getTabs().get(0); //get General Tab
 
-		SettingGroup ma1 = new SettingGroup("Look Back and Session Information");
-		tab.addGroup(ma1);
-		ma1.addRow(new IntegerDescriptor(Inputs.PERIOD, "LookBackDays", 10, 1,
-				9999, 1));
-		ma1.addRow(new IntegerDescriptor(Inputs.INPUT, "Session Close Hours (EST)",
-				17, 0, 23, 1));
-		ma1.addRow(new IntegerDescriptor(Inputs.INPUT2, "Session Close Minutes (EST)",
-				0, 0, 59, 1));
-		ma1.addRow(new IntegerDescriptor(Inputs.SHIFT, "Session Close Look AHead In Minutes", 60, 0, 120, 1));
+		SettingGroup ma2 = new SettingGroup("Trade and Order Information");
+		tab.addGroup(ma2);
+		ma2.addRow(new IntegerDescriptor(POSITION_SIZE, "Position size", 10000, 1, 1000000, 1));
+		ma2.addRow(new DoubleDescriptor(STOP_LOSS_POINTS, "Stop loss in terms of price", 50, 0, 9999, 1));
 		
-		ma1.addRow(new IntegerDescriptor(Inputs.IND2, "Position size", 10000, 1, 1000000, 1));
-		
-		ma1.addRow(new MarkerDescriptor(Inputs.UP_MARKER, "New HH/LL Marker", Enums.MarkerType.ARROW, Enums.Size.MEDIUM, defaults.getRed(), defaults.getLineColor(), true, true));
-		
-		
-		ma1.addRow(new BooleanDescriptor(Inputs.IND, "Show end of session?", true));
 		
 		//sd.addInvisibleSetting(new BarSizeDescriptor(Inputs.BARSIZE, "Daily Timefame", BarSize.getBarSize(BarSizeType.LINEAR, Enums.IntervalType.DAY, 1)));
 
 		// Runtime Settings
-		RuntimeDescriptor desc = new RuntimeDescriptor();
-		setRuntimeDescriptor(desc);
+		RuntimeDescriptor desc = getRuntimeDescriptor();
 		
-	    desc.setLabelSettings(Inputs.PERIOD, Inputs.INPUT, Inputs.INPUT2, Inputs.SHIFT, Inputs.IND2);
+	    desc.setLabelSettings(Inputs.PERIOD, Inputs.INPUT, Inputs.INPUT2, Inputs.SHIFT, POSITION_SIZE);
 	    desc.setLabelPrefix("Session Close HH/LL Strategy");
-	    //this.setMinBars(10);
+
 	}
 	
 	
@@ -125,14 +117,14 @@ public class AspenTrendReversalStrategy extends AspenTrendReversalStudySingleTim
 		super.onDeactivate(ctx);
 	}
 	
-	private void writeToCSV(DateTime timeStamp, Instrument ins, String tradeDirection, int positionSize, double entryPrice, double exitPrice, double PL) {
+	private void writeToCSV(DateTime timeStamp, Instrument ins, String tradeDirection, int positionSize, double entryPrice, double exitPrice, double PL, double drawDown) {
 		//check if file exists or is empty
 		boolean alreadyExists = new File(this.logFileName).exists();
 		if (!alreadyExists) {
 			try {
 				new File(this.logFileName).createNewFile();
 				BufferedWriter out = new BufferedWriter(new FileWriter(this.logFileName));
-				out.write("DATE, SYMBOL, TRADE DIRECTION, POSITION SIZE, ENTRY PRICE, EXIT PRICE, P/L $" + "\n");
+				out.write("DATE, SYMBOL, TRADE DIRECTION, POSITION SIZE, ENTRY PRICE, EXIT PRICE, P/L $, DRAW DOWN" + "\n");
 				out.close();
 			} 
 			catch (IOException e) {
@@ -144,7 +136,7 @@ public class AspenTrendReversalStrategy extends AspenTrendReversalStudySingleTim
 			BufferedWriter out = new BufferedWriter(new FileWriter(this.logFileName, true));
 			
 			out.write(dtfwithHours.print(timeStamp) + "," + ins.getSymbol() + "," + tradeDirection + "," + positionSize + "," + String.format("%.5f",entryPrice) + "," + 
-					String.format("%.5f",exitPrice) + "," + String.format("%.2f",PL) + "\n");
+					String.format("%.5f",exitPrice) + "," + String.format("%.2f",PL) + ", " + String.format("%.5f",drawDown) + "\n");
 			out.close();
 		}
 		catch (IOException e) {
@@ -161,7 +153,7 @@ public class AspenTrendReversalStrategy extends AspenTrendReversalStudySingleTim
 		if (!this.isActivated)
 			return;
 		
-		int positionSize = getSettings().getInteger(Inputs.IND2);
+		int positionSize = getSettings().getInteger(POSITION_SIZE);
 		DataSeries series = ctx.getDataContext().getDataSeries();
 		DateTime barEndTime = new DateTime(series.getEndTime());
 		DateTimeFormatter dtfwithHours = DateTimeFormat.forPattern("MM/dd/yyyy HH:mm:ss");
@@ -174,7 +166,6 @@ public class AspenTrendReversalStrategy extends AspenTrendReversalStudySingleTim
 						+ ": Going LONG at market");
 				ctx.buy(positionSize);
 				entryPrice = series.getClose();
-				entryDate = barEndTime;
 				return;
 			}
 			if (signal == Signals.HIGH) {
@@ -197,10 +188,11 @@ public class AspenTrendReversalStrategy extends AspenTrendReversalStudySingleTim
 						+ ": Reversing position to go SHORT at market");
 				ctx.closeAtMarket();
 				//log to CSV
-				writeToCSV(entryDate, ctx.getInstrument() , "LONG", positionSize, entryPrice, series.getClose(), ctx.getRealizedPnL());
+				writeToCSV(entryDate, ctx.getInstrument() , "LONG", positionSize, entryPrice, series.getClose(), ctx.getRealizedPnL(), looserPips);
 				ctx.sell(positionSize);
 				entryPrice = series.getClose();
 				entryDate = barEndTime;
+				looserPips = 0.0;
 				return;
 			}
 		}
@@ -212,16 +204,44 @@ public class AspenTrendReversalStrategy extends AspenTrendReversalStudySingleTim
 						+ ": Reversing position to go LONG at market");
 				context.closeAtMarket();
 				//log to CSV
-				writeToCSV(entryDate, context.getInstrument() , "SHORT", positionSize, entryPrice, series.getClose(), context.getRealizedPnL());
+				writeToCSV(entryDate, context.getInstrument() , "SHORT", positionSize, entryPrice, series.getClose(), context.getRealizedPnL(), looserPips);
 				context.buy(positionSize);
+				
 				entryPrice = series.getClose();
 				entryDate = barEndTime;
+				looserPips = 0.0;
 				return;
 			}
 		}
-			
-			
+	}
+	
+	
+	@Override
+	protected void calculate(int index, DataContext ctx) {
+		super.calculate(index, ctx);
+		if (context == null) return;
+	
+		
+		if (this.context.getPosition() < 0) {
+			//if short
+			if (ctx.getInstrument().getAskPrice() > this.entryPrice + getSettings().getDouble(STOP_LOSS_POINTS)) {
+				context.closeAtMarket();
+				int positionSize = getSettings().getInteger(POSITION_SIZE);
+				writeToCSV(entryDate, context.getInstrument() , "SHORT", positionSize, entryPrice, ctx.getDataSeries().getClose(), context.getRealizedPnL(), looserPips);
+			}
 		}
+		
+		if (this.context.getPosition() > 0) {
+			//if long
+			if (ctx.getInstrument().getBidPrice() < this.entryPrice - getSettings().getDouble(STOP_LOSS_POINTS)) {
+				int positionSize = getSettings().getInteger(POSITION_SIZE);
+				context.closeAtMarket();
+				writeToCSV(entryDate, context.getInstrument() , "LONG", positionSize, entryPrice, ctx.getDataSeries().getClose(), context.getRealizedPnL(), looserPips);
+			}
+		}
+	}
+	
+	
 		
 	/*    
 	@Override
@@ -341,4 +361,7 @@ public class AspenTrendReversalStrategy extends AspenTrendReversalStudySingleTim
 	
 	private double entryPrice;
 	private DateTime entryDate;
+	private double looserPips;
+	
+	
 }
